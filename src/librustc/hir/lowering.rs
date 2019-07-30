@@ -97,6 +97,7 @@ pub struct LoweringContext<'a> {
 
     generator_kind: Option<hir::GeneratorKind>,
     generator_context: Option<hir::HirId>,
+    async_ident: ast::Ident,
 
     /// Used to get the current `fn`'s def span to point to when using `await`
     /// outside of an `async fn`.
@@ -267,6 +268,7 @@ pub fn lower_crate(
         node_id_to_hir_id: IndexVec::new(),
         generator_kind: None,
         generator_context: None,
+        async_ident: ast::Ident::from_str("async_ctx"),
         current_item: None,
         lifetimes_to_define: Vec::new(),
         is_collecting_in_band_lifetimes: false,
@@ -1165,8 +1167,6 @@ impl<'a> LoweringContext<'a> {
     ) -> hir::ExprKind {
         let capture_clause = self.lower_capture_clause(capture_clause);
 
-        let ident = Ident::from_str("async_ctx");
-
         let context_id= self.sess.next_node_id();
         let _ = self.lower_node_id(context_id);
 
@@ -1211,7 +1211,7 @@ impl<'a> LoweringContext<'a> {
 
         let ty = ast::Ty{
             id: ref_id,
-            node: TyKind::Rptr(None, ast::MutTy{
+            node: TyKind::Ptr(ast::MutTy{
                 ty: syntax::ptr::P(ast::Ty{
                     id: context_id,
                     node: TyKind::Path(None, ctx_path),
@@ -1226,14 +1226,14 @@ impl<'a> LoweringContext<'a> {
         let ctx_id = self.sess.next_node_id();
         let _ = self.lower_node_id(ctx_id);
 
-        self.generator_context = Some(self.lower_node_id(argument_id));
+        self.generator_context = Some(self.lower_node_id(ctx_id));
         let ctx_argument = ast::Arg {
             span: span,
             attrs: ThinVec::default(),
             ty: syntax::ptr::P(ty),
             pat: syntax::ptr::P(ast::Pat {
                 id: ctx_id,
-                node: PatKind::Ident(ast::BindingMode::ByValue(ast::Mutability::Mutable), ident, None),
+                node: PatKind::Ident(ast::BindingMode::ByValue(ast::Mutability::Mutable), self.async_ident, None),
                 span: span,
             }),
             id: argument_id,
@@ -6084,8 +6084,7 @@ impl<'a> LoweringContext<'a> {
             let new_unchecked = P(self.expr(span, new_unchecked_expr_kind, ThinVec::new()));
             let unsafe_expr = self.expr_unsafe(new_unchecked);
 
-            let async_ident = Ident::from_str("async_ctx");
-            let async_ctx_expr = self.expr_ident(span, async_ident, self.generator_context.unwrap());
+            let async_ctx_expr = self.expr_ident(span, self.async_ident, self.generator_context.unwrap());
 
             P(self.expr_call_std_path(
                     gen_future_span,
@@ -6147,8 +6146,7 @@ impl<'a> LoweringContext<'a> {
             yield_expr
         };
 
-        let ctx_assign_ident = Ident::from_str("async_ctx");
-        let ctx_assign_expr_ident = P(self.expr_ident(span, ctx_assign_ident, self.generator_context.unwrap()));
+        let ctx_assign_expr_ident = P(self.expr_ident(span, self.async_ident, self.generator_context.unwrap()));
 
         let yield_assign = {
             let assign = P(self.expr(span, hir::ExprKind::Assign(ctx_assign_expr_ident, yield_stmt), ThinVec::new()));
