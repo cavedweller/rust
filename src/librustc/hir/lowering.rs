@@ -96,6 +96,7 @@ pub struct LoweringContext<'a> {
     modules: BTreeMap<NodeId, hir::ModuleItems>,
 
     generator_kind: Option<hir::GeneratorKind>,
+    generator_context: Option<hir::HirId>,
 
     /// Used to get the current `fn`'s def span to point to when using `await`
     /// outside of an `async fn`.
@@ -265,6 +266,7 @@ pub fn lower_crate(
         item_local_id_counters: Default::default(),
         node_id_to_hir_id: IndexVec::new(),
         generator_kind: None,
+        generator_context: None,
         current_item: None,
         lifetimes_to_define: Vec::new(),
         is_collecting_in_band_lifetimes: false,
@@ -1162,12 +1164,87 @@ impl<'a> LoweringContext<'a> {
         body: impl FnOnce(&mut LoweringContext<'_>) -> hir::Expr,
     ) -> hir::ExprKind {
         let capture_clause = self.lower_capture_clause(capture_clause);
+
+        let ident = Ident::from_str("async_ctx");
+
+        let context_id= self.sess.next_node_id();
+        let _ = self.lower_node_id(context_id);
+
+        let ref_id = self.sess.next_node_id();
+        let _ = self.lower_node_id(ref_id);
+
+        let segments = {
+            let core_ident = Ident::from_str("core");
+            let core_node = self.sess.next_node_id();
+            let _ = self.lower_node_id(core_node);
+            let core = ast::PathSegment {
+                ident: core_ident,
+                id: core_node,
+                args: None,
+            };
+
+            let task_ident = Ident::from_str("task");
+            let task_node = self.sess.next_node_id();
+            let _ = self.lower_node_id(task_node);
+            let task = ast::PathSegment {
+                ident: task_ident,
+                id: task_node,
+                args: None,
+            };
+
+            let context_ident = Ident::from_str("Context");
+            let context_node = self.sess.next_node_id();
+            let _ = self.lower_node_id(context_node);
+            let context = ast::PathSegment {
+                ident: context_ident,
+                id: context_node,
+                args: None,
+            };
+
+            vec![core, task, context]
+        };
+
+        let ctx_path = ast::Path {
+            span: span,
+            segments: segments,
+        };
+
+        let ty = ast::Ty{
+            id: ref_id,
+            node: TyKind::Rptr(None, ast::MutTy{
+                ty: syntax::ptr::P(ast::Ty{
+                    id: context_id,
+                    node: TyKind::Path(None, ctx_path),
+                    span: span
+                }),
+                mutbl: ast::Mutability::Mutable
+            }),
+            span: span
+        };
+
+        let argument_id = self.sess.next_node_id();
+        let ctx_id = self.sess.next_node_id();
+        let _ = self.lower_node_id(ctx_id);
+
+        self.generator_context = Some(self.lower_node_id(argument_id));
+        let ctx_argument = ast::Arg {
+            span: span,
+            attrs: ThinVec::default(),
+            ty: syntax::ptr::P(ty),
+            pat: syntax::ptr::P(ast::Pat {
+                id: ctx_id,
+                node: PatKind::Ident(ast::BindingMode::ByValue(ast::Mutability::Mutable), ident, None),
+                span: span,
+            }),
+            id: argument_id,
+        };
+
         let output = match ret_ty {
             Some(ty) => FunctionRetTy::Ty(ty),
             None => FunctionRetTy::Default(span),
         };
         let ast_decl = FnDecl {
-            inputs: vec![],
+            inputs: vec![ctx_argument],
             output,
             c_variadic: false
         };
@@ -5990,9 +6067,9 @@ impl<'a> LoweringContext<'a> {
             hir::LocalSource::AwaitDesugar,
         );
 
-        // ::std::future::poll_with_tls_context(unsafe {
+        // ::std::future::poll_with_context(unsafe {
         //     ::std::pin::Pin::new_unchecked(&mut pinned)
-        // })`
+        // }, async_ctx)`
         let poll_expr = {
             let pinned = P(self.expr_ident(span, pinned_ident, pinned_pat_hid));
             let ref_mut_pinned = self.expr_mut_addr_of(span, pinned);
@@ -6006,11 +6083,15 @@ impl<'a> LoweringContext<'a> {
             );
             let new_unchecked = P(self.expr(span, new_unchecked_expr_kind, ThinVec::new()));
             let unsafe_expr = self.expr_unsafe(new_unchecked);
+
+            let async_ident = Ident::from_str("async_ctx");
+            let async_ctx_expr = self.expr_ident(span, async_ident, self.generator_context.unwrap());
+
             P(self.expr_call_std_path(
-                gen_future_span,
-                &[sym::future, sym::poll_with_tls_context],
-                hir_vec![unsafe_expr],
-            ))
+                    gen_future_span,
+                    &[sym::future, sym::poll_with_context],
+                    hir_vec![unsafe_expr, async_ctx_expr],
+                    ))
         };
 
         // `::std::task::Poll::Ready(result) => break result`
@@ -6063,12 +6144,20 @@ impl<'a> LoweringContext<'a> {
                 hir::ExprKind::Yield(P(unit), hir::YieldSource::Await),
                 ThinVec::new(),
             ));
-            self.stmt(span, hir::StmtKind::Expr(yield_expr))
+            yield_expr
+        };
+
+        let ctx_assign_ident = Ident::from_str("async_ctx");
+        let ctx_assign_expr_ident = P(self.expr_ident(span, ctx_assign_ident, self.generator_context.unwrap()));
+
+        let yield_assign = {
+            let assign = P(self.expr(span, hir::ExprKind::Assign(ctx_assign_expr_ident, yield_stmt), ThinVec::new()));
+            self.stmt(span, hir::StmtKind::Semi(assign))
         };
 
         let loop_block = P(self.block_all(
             span,
-            hir_vec![match_stmt, yield_stmt],
+            hir_vec![match_stmt, yield_assign],
             None,
         ));
 

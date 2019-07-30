@@ -495,7 +495,7 @@ symbols! {
         plugin_registrar,
         plugins,
         Poll,
-        poll_with_tls_context,
+        poll_with_context,
         powerpc_target_feature,
         precise_pointer_size_matching,
         prelude,

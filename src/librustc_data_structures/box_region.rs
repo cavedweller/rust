@@ -21,19 +21,19 @@ pub enum Action {
 thread_local!(pub static BOX_REGION_ARG: Cell<Action> = Cell::new(Action::Complete));
 
 pub struct PinnedGenerator<I, A, R> {
-    generator: Pin<Box<dyn Generator<Yield = YieldType<I, A>, Return = R>>>
+    generator: Pin<Box<dyn Generator<(), Yield = YieldType<I, A>, Return = R>>>
 }
 
 impl<I, A, R> PinnedGenerator<I, A, R> {
     pub fn new<
-        T: Generator<Yield = YieldType<I, A>, Return = R> + 'static
+        T: Generator<(), Yield = YieldType<I, A>, Return = R> + 'static
     >(generator: T) -> (I, Self) {
         let mut result = PinnedGenerator {
             generator: Box::pin(generator)
         };
 
         // Run it to the first yield to set it up
-        let init = match Pin::new(&mut result.generator).resume() {
+        let init = match Pin::new(&mut result.generator).resume(()) {
             GeneratorState::Yielded(
                 YieldType::Initial(y)
             ) => y,
@@ -49,7 +49,7 @@ impl<I, A, R> PinnedGenerator<I, A, R> {
         });
 
         // Call the generator, which in turn will call the closure in BOX_REGION_ARG
-        if let GeneratorState::Complete(_) = Pin::new(&mut self.generator).resume() {
+        if let GeneratorState::Complete(_) = Pin::new(&mut self.generator).resume(()) {
             panic!()
         }
     }
@@ -60,7 +60,7 @@ impl<I, A, R> PinnedGenerator<I, A, R> {
             i.set(Action::Complete)
         });
 
-        let result = Pin::new(&mut self.generator).resume();
+        let result = Pin::new(&mut self.generator).resume(());
         if let GeneratorState::Complete(r) = result {
             r
         } else {
@@ -99,7 +99,7 @@ macro_rules! declare_box_region_type {
         >);
 
         impl $name {
-            fn new<T: ::std::ops::Generator<Yield = $yield_type, Return = $retc> + 'static>(
+            fn new<T: ::std::ops::Generator<(), Yield = $yield_type, Return = $retc> + 'static>(
                 generator: T
             ) -> ($reti, Self) {
                 let (initial, pinned) = $crate::box_region::PinnedGenerator::new(generator);

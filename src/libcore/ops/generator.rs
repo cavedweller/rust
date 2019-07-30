@@ -67,7 +67,7 @@ pub enum GeneratorState<Y, R> {
 #[lang = "generator"]
 #[unstable(feature = "generator_trait", issue = "43122")]
 #[fundamental]
-pub trait Generator {
+pub trait Generator<Args> {
     /// The type of value this generator yields.
     ///
     /// This associated type corresponds to the `yield` expression and the
@@ -110,25 +110,25 @@ pub trait Generator {
     /// been returned previously. While generator literals in the language are
     /// guaranteed to panic on resuming after `Complete`, this is not guaranteed
     /// for all implementations of the `Generator` trait.
-    fn resume(self: Pin<&mut Self>) -> GeneratorState<Self::Yield, Self::Return>;
+    extern "rust-call" fn resume(self: Pin<&mut Self>, args: Args) -> GeneratorState<Self::Yield, Self::Return>;
 }
 
 #[unstable(feature = "generator_trait", issue = "43122")]
-impl<G: ?Sized + Generator> Generator for Pin<&mut G> {
+impl<Args, G: ?Sized + Generator<Args>> Generator<Args> for Pin<&mut G> {
     type Yield = G::Yield;
     type Return = G::Return;
 
-    fn resume(mut self: Pin<&mut Self>) -> GeneratorState<Self::Yield, Self::Return> {
-        G::resume((*self).as_mut())
+    extern "rust-call" fn resume(mut self: Pin<&mut Self>, args: Args) -> GeneratorState<Self::Yield, Self::Return> {
+        G::resume((*self).as_mut(), args)
     }
 }
 
 #[unstable(feature = "generator_trait", issue = "43122")]
-impl<G: ?Sized + Generator + Unpin> Generator for &mut G {
+impl<Args, G: ?Sized + Generator<Args> + Unpin> Generator<Args> for &mut G {
     type Yield = G::Yield;
     type Return = G::Return;
 
-    fn resume(mut self: Pin<&mut Self>) -> GeneratorState<Self::Yield, Self::Return> {
-        G::resume(Pin::new(&mut *self))
+    extern "rust-call" fn resume(mut self: Pin<&mut Self>, args: Args) -> GeneratorState<Self::Yield, Self::Return> {
+        G::resume(Pin::new(&mut *self), args)
     }
 }

@@ -903,22 +903,22 @@ impl<T: ?Sized> AsMut<T> for Box<T> {
 impl<T: ?Sized> Unpin for Box<T> { }
 
 #[unstable(feature = "generator_trait", issue = "43122")]
-impl<G: ?Sized + Generator + Unpin> Generator for Box<G> {
+impl<Args, G: ?Sized + Generator<Args> + Unpin> Generator<Args> for Box<G> {
     type Yield = G::Yield;
     type Return = G::Return;
 
-    fn resume(mut self: Pin<&mut Self>) -> GeneratorState<Self::Yield, Self::Return> {
-        G::resume(Pin::new(&mut *self))
+    extern "rust-call" fn resume(mut self: Pin<&mut Self>, args: Args) -> GeneratorState<Self::Yield, Self::Return> {
+        G::resume(Pin::new(&mut *self), args)
     }
 }
 
 #[unstable(feature = "generator_trait", issue = "43122")]
-impl<G: ?Sized + Generator> Generator for Pin<Box<G>> {
+impl<Args, G: ?Sized + Generator<Args>> Generator<Args> for Pin<Box<G>> {
     type Yield = G::Yield;
     type Return = G::Return;
 
-    fn resume(mut self: Pin<&mut Self>) -> GeneratorState<Self::Yield, Self::Return> {
-        G::resume((*self).as_mut())
+    extern "rust-call" fn resume(mut self: Pin<&mut Self>, args: Args) -> GeneratorState<Self::Yield, Self::Return> {
+        G::resume((*self).as_mut(), args)
     }
 }
 
